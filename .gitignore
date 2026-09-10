@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+#private files
+dataset1/
+dataset2/
+dataset5/
+
+# 忽略这两个目录下的所有内容
+comic-text-and-bubble-detector/*
+GLM-OCR/*
+!comic-text-and-bubble-detector/.gitkeep
+!GLM-OCR/.gitkeep
