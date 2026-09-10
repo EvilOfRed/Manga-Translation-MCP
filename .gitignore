@@ -14,8 +14,8 @@ dataset1/
 dataset2/
 dataset5/
 
-# 忽略这两个目录下的所有内容
+# 忽略这两个目录下的所有内容，但保留 .gitkeep
 comic-text-and-bubble-detector/*
-GLM-OCR/*
 !comic-text-and-bubble-detector/.gitkeep
+GLM-OCR/*
 !GLM-OCR/.gitkeep
