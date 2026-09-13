@@ -10,10 +10,7 @@ wheels/
 .venv
 
 #private files
-dataset1/
-dataset2/
-dataset5/
-
+test.py
 # 忽略这两个目录下的所有内容，但保留 .gitkeep
 comic-text-and-bubble-detector/*
 !comic-text-and-bubble-detector/.gitkeep

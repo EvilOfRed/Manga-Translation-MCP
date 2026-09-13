@@ -8,77 +8,82 @@ from pydantic import Field
 import threading
 import base64
 from transformers import AutoProcessor, AutoModelForImageTextToText
-from PIL import ImageDraw, ImageFont
+from PIL import ImageDraw,ImageFont,Image
 import glob
 from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 import torch
-from PIL import Image, ImageDraw, ImageFont
 import gc
-from other_server import sendRequest, clear_history
+from rpc_utils import sendRequest, clearHistory,unloadModel,preserveChat,reloadChat
+import traceback
+from datetime import datetime
 
 mcp = MCPServer("MAN_MCP")
 
+BASE_DIR = Path(__file__).resolve().parent
 ocr_model = None
 text_recognition_model=None
-ocr_model_path = r"C:\Comic\GLM-OCR"
-text_recognition_model_path = r"C:\Comic\comic-text-and-bubble-detector"
-
+ocr_model_path = BASE_DIR/"GLM-OCR"
+text_recognition_model_path = BASE_DIR/"comic-text-and-bubble-detector"
+base_url="http://127.0.0.1:8721"
+model_name="Qwen3.8-27B-UD-IQ3_XXS"
 
 
 @mcp.tool(name="comic_translate_process",description="启动定制的漫画翻译流程，翻译漫画。")
 def comic_translate_process(
-    comic_dir: Annotated[str,Field(description="漫画所在目录。")],
-    output_dir: Annotated[str,Field(description="输出翻译结果的目录")],
+    comic_dir: Annotated[Path,Field(description="漫画所在目录。")],
+    output_dir: Annotated[Path,Field(description="输出翻译结果的目录")],
+    target_language:Annotated[str,Field(default="中文",description="翻译的目标语言")]
 ):
-    thread = threading.Thread(target=lambda: start_translate_comic(comic_dir,output_dir))
+    thread = threading.Thread(target=lambda: start_translate_comic(comic_dir,output_dir,target_language))
     thread.start()  
     return "流程启动，你必须结束输出，翻译才能开始。"
 
 
-def start_translate_comic(comic_dir:str,output_dir:str):
+def start_translate_comic(comic_dir,output_dir,target_language:str):
     # 1. 提取文字区域并保存 boxes.json 
+    preserveChat()
+    clearHistory()
+    unloadModel(base_url,model_name)
     extract_boxes_process(
         input_dir=comic_dir,
-        output_json=os.path.join(output_dir, "boxes.json"),
+        output_json=os.path.join(output_dir, "boxes.json"), # type: ignore[arg-type]
     ) 
     release_model()  # 释放文字检测模型，清理显存和内存
-    clear_history()
-    with open(r"C:\mcp_server\resources\comic_translation_rules.md", "r", encoding="utf-8") as f: 
+
+    with open(BASE_DIR/"resources/comic_translation_rules.md", "r", encoding="utf-8") as f: 
         ctr=f.read()
-    sendRequest("请严格遵守以下规则将我即将逐页提交的一篇漫画内容翻译为中文:\n"+ctr)
+    sendRequest(f"请严格遵守以下规则将我即将逐页提交的一篇漫画内容翻译为{target_language}:\n"+ctr)
     for idx, b64_img in enumerate(get_base64_images_from_dir(comic_dir)):
         b64_img = b64_img.replace('\n', '').replace('\r', '')
         sendRequest(f"第 {idx + 1} 页", b64_img)
-    with open(r"C:\mcp_server\resources\json格式1.md", "r", encoding="utf-8") as f: 
+    with open(BASE_DIR/"resources/json格式1.md", "r", encoding="utf-8") as f: 
         mrf1=f.read()
     sendRequest("所有页面上传完毕,按照如下格式：\n"+mrf1+"\n合并所得的json数组。")
-    with open(r"C:\mcp_server\resources\核查流程.md", "r", encoding="utf-8") as f: 
+    with open(BASE_DIR/"resources/核查流程.md", "r", encoding="utf-8") as f: 
         ckp=f.read()
-    sendRequest(ckp+"\n请严格遵守上述规则检查上述json的正确性,并经最终结果写入"+output_dir+r"\translation.json")
+    sendRequest(ckp+"\n请严格遵守上述规则检查上述json的正确性,并经最终结果写入"+str(output_dir/"translation.json"))
     #开始匹配操作
-    clear_history()
-    with open('run.log', 'a', encoding='utf-8') as f:
-        f.write(f"开始匹配操作，文件路径: {output_dir}\\translation.json\n{output_dir}\\boxes.json\n")
-    with open(f"{output_dir}\\translation.json", "r", encoding="utf-8") as f: 
+    clearHistory()
+    with open(output_dir/"translation.json", "r", encoding="utf-8") as f: 
         dataA = json.load(f)
-    with open(f"{output_dir}\\boxes.json", "r", encoding="utf-8") as f: 
+    with open(output_dir/"boxes.json", "r", encoding="utf-8") as f: 
         dataB = json.load(f)
-    with open('run.log', 'a', encoding='utf-8') as f:
-        f.write(f"数据加载结束。\n")
-    with open(r"C:\mcp_server\resources\匹配流程.md", "r", encoding="utf-8") as f: 
+    with open(BASE_DIR/"resources/匹配流程.md", "r", encoding="utf-8") as f: 
         mtp=f.read()
     sendRequest("请严格遵守以下规则处理我即将提交的数据:\n"+mtp)
     for A , B in zip(dataA,dataB):
         sendRequest(f"数据A:\n{A}\n数据B:\n{B}")
-    with open(r"C:\mcp_server\resources\json格式2.md", "r", encoding="utf-8") as f: 
+    with open(BASE_DIR/"resources/json格式2.md", "r", encoding="utf-8") as f: 
         mrf2=f.read()
-    sendRequest(f"按照如下格式：\n{mrf2}\n合并所得的json数组。将合并后的结果写入{output_dir}\\Lettering.json。")
+    sendRequest(f"按照如下格式：\n{mrf2}\n合并所得的json数组。将合并后的结果写入{output_dir / 'Lettering.json'}。")
     apply_comic_lettering(
-        json_path=f"{output_dir}\\Lettering.json",
+        json_path=output_dir / 'Lettering.json',
         image_dir=comic_dir,
         output_dir=output_dir,
         font_path=r"C:\Windows\Fonts\simhei.ttf"
     )
+    reloadChat()
+    sendRequest(f"处理已经完成，结果保存在{output_dir}")
     
 
 def get_base64_images_from_dir(comic_dir:str):
@@ -107,7 +112,7 @@ def loadTextRecognitionModel():
     global text_recognition_model
     if text_recognition_model is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = RTDetrForObjectDetection.from_pretrained(text_recognition_model_path).to(device)
+        model = RTDetrForObjectDetection.from_pretrained(text_recognition_model_path).to(device)  # type: ignore[arg-type]
         processor = RTDetrImageProcessor.from_pretrained(text_recognition_model_path)
         text_recognition_model = (model, processor)
 
@@ -140,6 +145,7 @@ def detect_text_regions(image_path: str) -> List[Dict]:
     global text_recognition_model
     if text_recognition_model is None:
         loadTextRecognitionModel()
+    assert text_recognition_model is not None
     model, processor = text_recognition_model
 
     # 加载图片
@@ -154,13 +160,17 @@ def detect_text_regions(image_path: str) -> List[Dict]:
     # 解析结果，设置置信度阈值（可调整）
     target_sizes = torch.tensor([image.size[::-1]]).to(model.device)
     results = processor.post_process_object_detection(
-        outputs, target_sizes=target_sizes, threshold=0.5
+        outputs, target_sizes=target_sizes, threshold=0.5 # type: ignore[arg-type]
     )
 
+    #存疑
     detections = []
+    id2label = model.config.id2label
+    if id2label is None:
+        raise RuntimeError("模型配置缺少 id2label，无法解析类别名称。")
     for result in results:
         for score, label_id, box in zip(result["scores"], result["labels"], result["boxes"]):
-            label = model.config.id2label[label_id.item()]
+            label = id2label[label_id.item()]
             # 只保留文字区域：对话框内文字 或 自由文字
             if label not in ["text_bubble", "text_free"]:
                 continue
@@ -173,6 +183,7 @@ def useOcrModel(image_input: Union[str, Image.Image]):
     global ocr_model
     if ocr_model is None:
         load_ocr_model()
+    assert ocr_model is not None 
     processor = AutoProcessor.from_pretrained(ocr_model_path)
     model = ocr_model
     messages = [
@@ -190,6 +201,7 @@ def useOcrModel(image_input: Union[str, Image.Image]):
             ],
         }
     ]
+    
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,
@@ -198,12 +210,12 @@ def useOcrModel(image_input: Union[str, Image.Image]):
         return_tensors="pt"
     ).to(model.device)
     inputs.pop("token_type_ids", None)
-    generated_ids = model.generate(**inputs, max_new_tokens=8192)
+    generated_ids = model.generate(**inputs, max_new_tokens=8192) # type: ignore[attr-defined]
     output_text = processor.decode(generated_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     return output_text
 
 
-def process_image_with_ocr(image_path: str,save_vis_path: str = None) -> List[Dict]:
+def process_image_with_ocr(image_path: str,save_vis_path: str|None = None) -> List[Dict]:
     """
     对一张图片执行检测 + 裁剪 + OCR，并可选择保存可视化结果。
     
@@ -285,7 +297,7 @@ def process_image_with_ocr(image_path: str,save_vis_path: str = None) -> List[Di
 
 
 def get_sorted_image_paths(
-    directory: str,
+    directory: Path,
     extensions: tuple = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ) -> List[str]:
     """
@@ -301,11 +313,12 @@ def get_sorted_image_paths(
 
 
 def extract_boxes_process(
-    input_dir: str,
-    output_json: str,
-    save_vis_dir: str = None,
+    input_dir: Path,
+    output_json:Path,
+    save_vis_dir: Path|None = None,
     extensions: tuple = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
-) -> List[Dict]:
+):
+    
     """
     按顺序处理目录下所有图片，每张图片调用 process_image_with_ocr，
     收集每页的页码（顺序）及每个检测框的 box 和 text（舍弃 label），
