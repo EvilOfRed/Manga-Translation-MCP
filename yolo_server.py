@@ -14,8 +14,6 @@ from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 import torch
 import gc
 from mcp_rpc_utils import sendRequest, clearHistory,unloadModel,preserveChat,reloadChat
-import traceback
-from datetime import datetime
 
 mcp = MCPServer("MAN_MCP")
 
