@@ -10,7 +10,10 @@
 ---
 
 ## 2. 特殊要求
+
 - **对不确定的内容**：在信息不全时，对未明确交代的人名、称呼、专有名词等，仅做字面直译或音译，并加“暂译”注释，严禁尝试补全或推测其完整含义，所有解释权交由后续页面。
+
+- **记录文字的排列方式**：将文字的排列信息存入`layout` 字段。
 
 ---
 
@@ -23,7 +26,11 @@
 
 ## 4. 输出格式
 - 最外层为一个对象，包含 page（页码）和 context（内容数组）两个键。
-- 每个条目包含 `original` 和 `translation` 字段。
+- 每个条目包含 `original` 、`translation`、`layout` 字段。
+ - **字段说明**：
+  - `original`：原文。
+  - `translation`：译文。
+  - `layout`：文字排本只允许两个取值:"horizontal"、"vertical"。
 
 
 
@@ -34,11 +41,14 @@
   "context": [
     {
          "original": "...(省略)", 
-         "translation": "...(省略)" 
+         "translation": "...(省略)",
+         "layout":"horizontal"
     },
     {
          "original": "...(省略)", 
-         "translation": "...(省略)" 
+         "translation": "...(省略)",
+         "layout":"vertical"
     }
   ]
 }
+```

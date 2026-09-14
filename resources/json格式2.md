@@ -11,19 +11,22 @@
         "boxes": [
           { "coords": [.., .., .., ..], "label": "text_bubble" },
           { "coords": [.., .., .., ..], "label": "text_free" }
-        ]
+        ],
+        "layout":"horizontal"
       },
       {
         "original": "...",
         "translation": "...",
         "boxes": [
           { "coords": [.., .., .., ..], "label": "text_bubble" }
-        ]
+        ],
+        "layout":"horizontal"
       },
       {
         "original": "...",
         "translation": "...",
-        "boxes": []
+        "boxes": [],
+        "layout":"horizontal"
       }
     ]
   },
@@ -36,19 +39,22 @@
         "boxes": [
           { "coords": [.., .., .., ..], "label": "text_bubble" },
           { "coords": [.., .., .., ..], "label": "text_free" }
-        ]
+        ],
+        "layout":"horizontal"
       },
       {
         "original": "...",
         "translation": "...",
-        "boxes": []
+        "boxes": [],
+        "layout":"horizontal"
       },
       {
         "original": "...",
         "translation": "...",
         "boxes": [
           { "coords": [.., .., .., ..], "label": "text_bubble" }
-        ]
+        ],
+        "layout":"horizontal"
       }
     ]
   }

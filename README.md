@@ -5,7 +5,7 @@
 
 1.后端使用的模型必须支持多模态推理，否则无法识别图像。
 
-2.yolo_server.py 在运行过程中会通过 mcp_rpc_utils 的 sendRequest 向 LLM 持续发送翻译请求。由于 市面大多数agent 原生不支持流程化的自我调用，本 MCP 必须搭配 open-MCPclient 使用，由后者提供严格的对话流程管理。
+2.yolo_server.py 在运行过程中会通过 mcp_rpc_utils 的 sendRequest 向 LLM 持续发送翻译请求。由于 市面大多数agent 原生不支持流程化的自我调用，本 MCP 必须搭配 open-MCPclient(https://github.com/EvilOfRed/open-MCPclient.git) 使用，由后者提供严格的对话流程管理。
 
 
 

@@ -378,6 +378,7 @@ def draw_text_in_box(
     box,
     label,
     text,
+    textLayout,
     font_path,
     max_font_size=60,
     min_font_size=10,
@@ -391,19 +392,19 @@ def draw_text_in_box(
     if box_width <= 0 or box_height <= 0 or not chars:
         return
 
-    x1=x1-padding
-    y1=y1-padding
-    x2=x2+padding
-    y2=y2+padding
-    
-    if label == "text_free" :
+    x1 = x1 - padding
+    y1 = y1 - padding
+    x2 = x2 + padding
+    y2 = y2 + padding
+
+    if label == "text_free":
         region = draw._image.crop((x1, y1, x2, y2))
         overlay = Image.new('RGBA', region.size, (255, 255, 255, 200))
         blended = Image.alpha_composite(region, overlay)
         draw._image.paste(blended, (x1, y1))
     else:
         draw.rectangle(
-            [x1,y1,x2,y2],
+            [x1, y1, x2, y2],
             fill=(255, 255, 255, 255),
         )
 
@@ -419,32 +420,61 @@ def draw_text_in_box(
 
     total_chars = len(chars)
 
-    for font_size in range(max_font_size, min_font_size - 1, -2):
-        font = load_font(font_size)
-        char_width, char_height = measure_font(font)
-        rows = max(1, box_height // char_height)
-        columns = (total_chars + rows - 1) // rows
+    if textLayout == "horizontal":
+        # ---------- 水平排版：从左到右，从上到下 ----------
+        for font_size in range(max_font_size, min_font_size - 1, -2):
+            font = load_font(font_size)
+            char_width, char_height = measure_font(font)
+            chars_per_line = max(1, box_width // char_width)
+            lines = (total_chars + chars_per_line - 1) // chars_per_line
+            if lines * char_height <= box_height:
+                break
+        else:
+            font = load_font(min_font_size)
+            char_width, char_height = measure_font(font)
+            chars_per_line = max(1, box_width // char_width)
+            lines = (total_chars + chars_per_line - 1) // chars_per_line
 
-        if columns * char_width <= box_width:
-            break
+        total_height = lines * char_height
+        start_y = y1 + (box_height - total_height) // 2
+
+        for line_idx in range(lines):
+            start = line_idx * chars_per_line
+            end = min(start + chars_per_line, total_chars)
+            line_chars = chars[start:end]
+            line_width = len(line_chars) * char_width
+            start_x = x1 + (box_width - line_width) // 2
+            y = start_y + line_idx * char_height
+            for i, char in enumerate(line_chars):
+                x = start_x + i * char_width
+                draw.text((x, y), char, font=font, fill=fill_color)
     else:
-        font = load_font(min_font_size)
-        char_width, char_height = measure_font(font)
-        rows = max(1, box_height // char_height)
-        columns = (total_chars + rows - 1) // rows
+        # ---------- 垂直排版：从右到左，每列从上到下（原有逻辑） ----------
+        for font_size in range(max_font_size, min_font_size - 1, -2):
+            font = load_font(font_size)
+            char_width, char_height = measure_font(font)
+            rows = max(1, box_height // char_height)
+            columns = (total_chars + rows - 1) // rows
+            if columns * char_width <= box_width:
+                break
+        else:
+            font = load_font(min_font_size)
+            char_width, char_height = measure_font(font)
+            rows = max(1, box_height // char_height)
+            columns = (total_chars + rows - 1) // rows
 
-    total_width = columns * char_width
-    start_x = x1 + (box_width - total_width) // 2
-    start_y = y1 + (box_height - rows * char_height) // 2
+        total_width = columns * char_width
+        start_x = x1 + (box_width - total_width) // 2
+        start_y = y1 + (box_height - rows * char_height) // 2
 
-    for column in range(columns):
-        x = start_x + (columns - 1 - column) * char_width
-        start = column * rows
-        end = min(start + rows, total_chars)
+        for column in range(columns):
+            x = start_x + (columns - 1 - column) * char_width
+            start = column * rows
+            end = min(start + rows, total_chars)
+            for row, char in enumerate(chars[start:end]):
+                y = start_y + row * char_height
+                draw.text((x, y), char, font=font, fill=fill_color)
 
-        for row, char in enumerate(chars[start:end]):
-            y = start_y + row * char_height
-            draw.text((x, y), char, font=font, fill=fill_color)
 
 def process_page(image_path, context_list, output_path, font_path):
     img = Image.open(image_path).convert("RGBA")
@@ -454,12 +484,13 @@ def process_page(image_path, context_list, output_path, font_path):
         if not translation:
             continue
         boxes = item.get("boxes", [])
+        textLayout=item.get("layout","horizontal")
         if not boxes:
             continue
         for box in boxes:
             coords = box.get("coords")
             lable = box.get("label")
-            draw_text_in_box(draw, coords, lable, translation, font_path)
+            draw_text_in_box(draw, coords, lable, translation,textLayout,font_path)
     img.convert("RGB").save(output_path)
 
 def apply_comic_lettering(json_path, image_dir, output_dir, font_path):
