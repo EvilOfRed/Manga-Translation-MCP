@@ -35,6 +35,14 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu13
 pip install -r requirements.txt
 ```
 
+### 下载模型文件
+
+从huggingface或其它途径下载运行服务时所需的模型文件：
+ogkalu/comic-text-and-bubble-detector
+zai-org/GLM-OCR
+
+将其放入项目中对应的文件夹。
+
 ### 配置mcp服务示例
 
 在agent的配置文件中：
