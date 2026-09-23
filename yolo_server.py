@@ -13,7 +13,7 @@ import glob
 from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 import torch
 import gc
-from mcp_rpc_utils import sendRequest, clearHistory,unloadModel,preserveChat,reloadChat
+import sys
 
 mcp = MCPServer("MAN_MCP")
 
@@ -22,88 +22,7 @@ ocr_model = None
 text_recognition_model=None
 ocr_model_path = BASE_DIR/"GLM-OCR"
 text_recognition_model_path = BASE_DIR/"comic-text-and-bubble-detector"
-base_url="http://127.0.0.1:8721"
-model_name="Qwen3.8-27B-UD-IQ3_XXS"
 
-
-@mcp.tool(name="comic_translate_process",description="启动定制的漫画翻译流程，翻译漫画。")
-def comic_translate_process(
-    comic_dir: Annotated[Path,Field(description="漫画所在目录。")],
-    output_dir: Annotated[Path,Field(description="输出翻译结果的目录")],
-    target_language:Annotated[str,Field(default="中文",description="翻译的目标语言")]
-):
-    thread = threading.Thread(target=lambda: start_translate_comic(comic_dir,output_dir,target_language))
-    thread.start()  
-    return "流程启动，你必须结束输出，翻译才能开始。"
-
-
-def start_translate_comic(comic_dir,output_dir,target_language:str):
-    # 1. 提取文字区域并保存 boxes.json 
-    preserveChat()
-    clearHistory()
-    unloadModel(base_url,model_name)
-    extract_boxes_process(
-        input_dir=comic_dir,
-        output_json=os.path.join(output_dir, "boxes.json"), # type: ignore[arg-type]
-    ) 
-    release_model()  # 释放文字检测模型，清理显存和内存
-
-    with open(BASE_DIR/"resources/comic_translation_rules.md", "r", encoding="utf-8") as f: 
-        ctr=f.read()
-    sendRequest(f"请严格遵守以下规则将我即将逐页提交的一篇漫画内容翻译为{target_language}:\n"+ctr)
-    for idx, b64_img in enumerate(get_base64_images_from_dir(comic_dir)):
-        b64_img = b64_img.replace('\n', '').replace('\r', '')
-        sendRequest(f"第 {idx + 1} 页", b64_img)
-    with open(BASE_DIR/"resources/json格式1.md", "r", encoding="utf-8") as f: 
-        mrf1=f.read()
-    sendRequest("所有页面上传完毕,按照如下格式：\n"+mrf1+"\n合并所得的json数组。")
-    with open(BASE_DIR/"resources/核查流程.md", "r", encoding="utf-8") as f: 
-        ckp=f.read()
-    sendRequest(ckp+"\n请严格遵守上述规则检查上述json的正确性,并经最终结果写入"+str(output_dir/"translation.json"))
-    #开始匹配操作
-    clearHistory()
-    with open(output_dir/"translation.json", "r", encoding="utf-8") as f: 
-        dataA = json.load(f)
-    with open(output_dir/"boxes.json", "r", encoding="utf-8") as f: 
-        dataB = json.load(f)
-    with open(BASE_DIR/"resources/匹配流程.md", "r", encoding="utf-8") as f: 
-        mtp=f.read()
-    sendRequest("请严格遵守以下规则处理我即将提交的数据:\n"+mtp)
-    for A , B in zip(dataA,dataB):
-        sendRequest(f"数据A:\n{A}\n数据B:\n{B}")
-    with open(BASE_DIR/"resources/json格式2.md", "r", encoding="utf-8") as f: 
-        mrf2=f.read()
-    sendRequest(f"按照如下格式：\n{mrf2}\n合并所得的json数组。将合并后的结果写入{output_dir / 'Lettering.json'}。")
-    apply_comic_lettering(
-        json_path=output_dir / 'Lettering.json',
-        image_dir=comic_dir,
-        output_dir=output_dir,
-        font_path=r"C:\Windows\Fonts\simhei.ttf"
-    )
-    reloadChat()
-    sendRequest(f"处理已经完成，结果保存在{output_dir}")
-    
-
-def get_base64_images_from_dir(comic_dir:str):
-    image_extensions = {
-        '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'
-    }
-    dir_path = Path(comic_dir)
-    if not dir_path.exists() or not dir_path.is_dir():
-        raise ValueError(f"目录不存在或不是有效目录: {comic_dir}")
-    # 1. 排序文件列表
-    files = [p for p in dir_path.iterdir() if p.is_file() and p.suffix.lower() in image_extensions]
-    files.sort(key=lambda p: p.name)  # 按文件名排序
-    # 2. 使用生成器逐个编码，节省内存
-    for file_path in files:
-        try:
-            yield encode_image(str(file_path.absolute()))
-        except Exception as e:
-            print(f"跳过文件 {file_path.name}: {e}")
-
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
 
 
 def loadTextRecognitionModel():
@@ -310,61 +229,6 @@ def get_sorted_image_paths(
     return paths
 
 
-def extract_boxes_process(
-    input_dir: Path,
-    output_json:Path,
-    save_vis_dir: Path|None = None,
-    extensions: tuple = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
-):
-    
-    """
-    按顺序处理目录下所有图片，每张图片调用 process_image_with_ocr，
-    收集每页的页码（顺序）及每个检测框的 box 和 text（舍弃 label），
-    最终保存为 JSON 文件。
-
-    参数:
-        input_dir: 输入图片目录
-        output_json: 输出 JSON 文件路径
-        save_vis_dir: 可选，若指定则保存可视化图片到此目录（文件名与输入相同）
-        extensions: 图片扩展名过滤
-
-    返回:
-        处理结果列表，每个元素为 {"page": int, "boxes": [{"box": [...], "text": "..."}, ...]}
-    """
-    # 1. 获取所有图片文件并按文件名排序（确保顺序稳定）
-    image_paths = get_sorted_image_paths(input_dir, extensions)
-    if not image_paths:
-        print(f"在目录 {input_dir} 中未找到任何图片")
-        return []
-
-    all_results = []
-    for idx, img_path in enumerate(image_paths, start=1):
-        print(f"处理第 {idx} 张图片: {img_path}")
-
-        # 如果指定了可视化保存目录，则构造保存路径
-        vis_path = None
-        if save_vis_dir:
-            os.makedirs(save_vis_dir, exist_ok=True)
-            base = os.path.basename(img_path)
-            vis_path = os.path.join(save_vis_dir, f"vis_{idx}_{base}")
-
-        # 调用 OCR 处理函数（会返回检测框及识别文本）
-        detections = process_image_with_ocr(img_path, save_vis_path=vis_path)
-
-        # 保存该页结果
-        all_results.append({
-            "page": idx,
-            "boxes": detections
-        })
-
-    # 2. 保存为 JSON 文件
-    os.makedirs(os.path.dirname(output_json), exist_ok=True)
-    with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, ensure_ascii=False, indent=2)
-    print(f"结果已保存至 {output_json}")
-
-
-
 
 def load_ts_json(json_path):
     """读取 ts.json，返回按页码组织的列表"""
@@ -493,7 +357,59 @@ def process_page(image_path, context_list, output_path, font_path):
             draw_text_in_box(draw, coords, lable, translation,textLayout,font_path)
     img.convert("RGB").save(output_path)
 
-def apply_comic_lettering(json_path, image_dir, output_dir, font_path):
+
+
+
+@mcp.tool(name="extract_boxes_process", description="从原始图片中提取气泡和自由文本，输出矩形框信息。除非用户指定否则不可调用。")
+def extract_boxes_process(
+    input_dir: Annotated[Path, Field(description="图片所在目录。")],
+    output_json:Annotated[Path, Field(description="结果保存的文件，json格式。")],
+    save_vis_dir: Annotated[Path, Field(default=None,description="保存中间产生的可视化结果的目录。")],
+    extensions: tuple = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+):
+    # 1. 获取所有图片文件并按文件名排序（确保顺序稳定）
+    image_paths = get_sorted_image_paths(input_dir, extensions)
+    if not image_paths:
+        print(f"在目录 {input_dir} 中未找到任何图片")
+        return []
+
+    all_results = []
+    for idx, img_path in enumerate(image_paths, start=1):
+        print(f"处理第 {idx} 张图片: {img_path}")
+
+        # 如果指定了可视化保存目录，则构造保存路径
+        vis_path = None
+        if save_vis_dir:
+            os.makedirs(save_vis_dir, exist_ok=True)
+            base = os.path.basename(img_path)
+            vis_path = os.path.join(save_vis_dir, f"vis_{idx}_{base}")
+
+        # 调用 OCR 处理函数（会返回检测框及识别文本）
+        detections = process_image_with_ocr(img_path, save_vis_path=vis_path)
+
+        # 保存该页结果
+        all_results.append({
+            "page": idx,
+            "boxes": detections
+        })
+
+    # 2. 保存为 JSON 文件
+    os.makedirs(os.path.dirname(output_json), exist_ok=True)
+    with open(output_json, "w", encoding="utf-8") as f:
+        json.dump(all_results, f, ensure_ascii=False, indent=2)
+    release_model()
+    print(f"结果已保存至 {output_json}")
+
+
+
+
+@mcp.tool(name="apply_comic_lettering", description="应用使用嵌字信息。除非用户指定否则不可调用。")
+def apply_comic_lettering(
+    json_path:Annotated[Path, Field(description="存有嵌字信息的json")], 
+    image_dir:Annotated[Path, Field(description="图片所在目录")],
+    output_dir:Annotated[Path, Field(description="结果输出目录")], 
+    font_path:Annotated[Path, Field(default=r"C:\Windows\Fonts\simhei.ttf",description="字体文件")]
+    ):
     data = load_ts_json(json_path)
     os.makedirs(output_dir, exist_ok=True)
     image_paths = get_sorted_image_paths(image_dir)
@@ -506,4 +422,12 @@ def apply_comic_lettering(json_path, image_dir, output_dir, font_path):
 
 
 if __name__ == "__main__": 
-    mcp.run()
+    try:
+        mcp.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # 退出阶段：MCP 通信已经结束，FD 1 不再需要保留
+        # 把它永久指向 stderr，挡住 qwen_tts / torch 退出清理的污染
+        os.dup2(2, 1)
+        sys.stdout = sys.stderr
